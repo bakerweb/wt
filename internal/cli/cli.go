@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/bakerweb/wt/internal/agent"
@@ -125,6 +126,16 @@ func buildRegistry(cfg *config.Config) *connector.Registry {
 	return reg
 }
 
+func resolveAgent(explicit, envAgent, defaultAgent string) string {
+	if explicit != "" {
+		return explicit
+	}
+	if envAgent != "" {
+		return envAgent
+	}
+	return defaultAgent
+}
+
 // --- start ---
 func startCmd() *cli.Command {
 	return &cli.Command{
@@ -205,13 +216,7 @@ func startCmd() *cli.Command {
 			fmt.Printf("   Worktree: %s\n", t.Worktree)
 
 			// Determine agent to launch
-			agentName := c.String("agent")
-			if agentName == "" {
-				agentName = os.Getenv("WT_AGENT")
-			}
-			if agentName == "" {
-				agentName = cfg.DefaultAgent
-			}
+			agentName := resolveAgent(c.String("agent"), os.Getenv("WT_AGENT"), cfg.DefaultAgent)
 
 			// If no agent specified, just print the cd command
 			if agentName == "" {
@@ -296,13 +301,7 @@ func agentCmd() *cli.Command {
 			}
 
 			// Determine agent to launch
-			agentName := c.String("agent")
-			if agentName == "" {
-				agentName = os.Getenv("WT_AGENT")
-			}
-			if agentName == "" {
-				agentName = cfg.DefaultAgent
-			}
+			agentName := resolveAgent(c.String("agent"), os.Getenv("WT_AGENT"), cfg.DefaultAgent)
 
 			if agentName == "" {
 				return fmt.Errorf("no agent specified; use --agent flag, set WT_AGENT env var, or configure default_agent")
@@ -687,6 +686,14 @@ func configCmd() *cli.Command {
 			value := c.Args().Get(1)
 			switch key {
 			case "worktrees_base":
+				// Expand tilde for home directory
+				if strings.HasPrefix(value, "~/") {
+					home, err := os.UserHomeDir()
+					if err != nil {
+						return fmt.Errorf("failed to resolve home directory: %w", err)
+					}
+					value = filepath.Join(home, value[2:])
+				}
 				cfg.WorktreesBase = value
 			case "default_branch":
 				cfg.DefaultBranch = value
@@ -740,14 +747,7 @@ func joinArgs(c *cli.Context) string {
 	for i := 0; i < c.NArg(); i++ {
 		args[i] = c.Args().Get(i)
 	}
-	result := ""
-	for i, a := range args {
-		if i > 0 {
-			result += " "
-		}
-		result += a
-	}
-	return result
+	return strings.Join(args, " ")
 }
 
 func truncate(s string, max int) string {
