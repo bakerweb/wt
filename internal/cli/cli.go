@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"text/tabwriter"
 
+	"github.com/bakerweb/wt/internal/agent"
 	"github.com/bakerweb/wt/internal/config"
 	"github.com/bakerweb/wt/internal/connector"
 	"github.com/bakerweb/wt/internal/connector/clickup"
@@ -26,6 +27,7 @@ func Run(args []string) error {
 		Version: Version,
 		Commands: []*cli.Command{
 			startCmd(),
+			agentCmd(),
 			listCmd(),
 			finishCmd(),
 			removeCmd(),
@@ -88,6 +90,14 @@ func startCmd() *cli.Command {
 				Name:  "jira",
 				Usage: "Create worktree from a Jira issue key (e.g. PROJ-123)",
 			},
+			&cli.StringFlag{
+				Name:  "agent",
+				Usage: "Launch an agent after creating the worktree (e.g. copilot, claude)",
+			},
+			&cli.StringFlag{
+				Name:  "agent-args",
+				Usage: "Arguments to pass to the agent",
+			},
 		},
 		Action: func(c *cli.Context) error {
 			cfg, err := loadConfig()
@@ -132,8 +142,121 @@ func startCmd() *cli.Command {
 			fmt.Printf("✅ Task started: %s\n", t.ID)
 			fmt.Printf("   Branch:   %s\n", t.Branch)
 			fmt.Printf("   Worktree: %s\n", t.Worktree)
-			fmt.Printf("\n   cd %s\n", t.Worktree)
-			return nil
+
+			// Determine agent to launch
+			agentName := c.String("agent")
+			if agentName == "" {
+				agentName = os.Getenv("WT_AGENT")
+			}
+			if agentName == "" {
+				agentName = cfg.DefaultAgent
+			}
+
+			// If no agent specified, just print the cd command
+			if agentName == "" {
+				fmt.Printf("\n   cd %s\n", t.Worktree)
+				return nil
+			}
+
+			// Validate and launch agent
+			if err := agent.ValidateAgent(agentName, cfg.AgentAliases); err != nil {
+				fmt.Fprintf(os.Stderr, "⚠️  Agent %q not found: %v\n", agentName, err)
+				fmt.Printf("\n   cd %s\n", t.Worktree)
+				return nil
+			}
+
+			// Parse agent args
+			agentArgs := agent.ParseAgentArgs(c.String("agent-args"))
+
+			fmt.Printf("\n🚀 Launching agent: %s\n", agentName)
+			return agent.LaunchAgent(agent.LaunchOptions{
+				Agent:         agentName,
+				Args:          agentArgs,
+				WorkDir:       t.Worktree,
+				TaskID:        t.ID,
+				TicketKey:     t.TicketKey,
+				TicketSummary: opts.TicketTitle,
+				Aliases:       cfg.AgentAliases,
+			})
+		},
+	}
+}
+
+// --- agent ---
+func agentCmd() *cli.Command {
+	return &cli.Command{
+		Name:      "agent",
+		Usage:     "Launch an agent on an existing worktree",
+		ArgsUsage: "<task-id>",
+		Flags: []cli.Flag{
+			&cli.StringFlag{
+				Name:  "agent",
+				Usage: "Agent to launch (e.g. copilot, claude). If omitted, uses WT_AGENT env var or default_agent config",
+			},
+			&cli.StringFlag{
+				Name:  "agent-args",
+				Usage: "Arguments to pass to the agent",
+			},
+		},
+		Action: func(c *cli.Context) error {
+			if c.NArg() < 1 {
+				return fmt.Errorf("please provide a task ID (see 'wt list')")
+			}
+
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
+
+			taskID := c.Args().First()
+			t, err := cfg.FindTask(taskID)
+			if err != nil {
+				return err
+			}
+
+			// Verify worktree still exists
+			if _, err := os.Stat(t.Worktree); err != nil {
+				return fmt.Errorf("worktree %s no longer exists: %w", t.Worktree, err)
+			}
+
+			// Determine agent to launch
+			agentName := c.String("agent")
+			if agentName == "" {
+				agentName = os.Getenv("WT_AGENT")
+			}
+			if agentName == "" {
+				agentName = cfg.DefaultAgent
+			}
+
+			if agentName == "" {
+				return fmt.Errorf("no agent specified; use --agent flag, set WT_AGENT env var, or configure default_agent")
+			}
+
+			// Validate agent (fail if not found, unlike wt start)
+			if err := agent.ValidateAgent(agentName, cfg.AgentAliases); err != nil {
+				return fmt.Errorf("agent %q not found: %w", agentName, err)
+			}
+
+			// Parse agent args
+			agentArgs := agent.ParseAgentArgs(c.String("agent-args"))
+
+			fmt.Printf("🚀 Launching agent %q on task %s\n", agentName, t.ID)
+			fmt.Printf("   Worktree: %s\n", t.Worktree)
+
+			ticketSummary := t.TicketKey
+			if t.Description != "" {
+				ticketSummary = t.Description
+			}
+
+			return agent.LaunchAgent(agent.LaunchOptions{
+				Agent:         agentName,
+				Args:          agentArgs,
+				WorkDir:       t.Worktree,
+				TaskID:        t.ID,
+				TicketKey:     t.TicketKey,
+				TicketSummary: ticketSummary,
+				Aliases:       cfg.AgentAliases,
+			})
 		},
 	}
 }
@@ -379,6 +502,15 @@ func configCmd() *cli.Command {
 				fmt.Printf("worktrees_base: %s\n", cfg.WorktreesBase)
 				fmt.Printf("default_branch: %s\n", cfg.DefaultBranch)
 				fmt.Printf("branch_prefix:  %s\n", cfg.BranchPrefix)
+				if cfg.DefaultAgent != "" {
+					fmt.Printf("default_agent:  %s\n", cfg.DefaultAgent)
+				}
+				if len(cfg.AgentAliases) > 0 {
+					fmt.Printf("agent_aliases:\n")
+					for k, v := range cfg.AgentAliases {
+						fmt.Printf("  %s: %s\n", k, v)
+					}
+				}
 				fmt.Printf("connectors:     %v\n", connectorNames(cfg))
 				return nil
 			}
@@ -391,6 +523,8 @@ func configCmd() *cli.Command {
 					fmt.Println(cfg.DefaultBranch)
 				case "branch_prefix":
 					fmt.Println(cfg.BranchPrefix)
+				case "default_agent":
+					fmt.Println(cfg.DefaultAgent)
 				default:
 					return fmt.Errorf("unknown config key: %s", key)
 				}
@@ -404,6 +538,8 @@ func configCmd() *cli.Command {
 				cfg.DefaultBranch = value
 			case "branch_prefix":
 				cfg.BranchPrefix = value
+			case "default_agent":
+				cfg.DefaultAgent = value
 			default:
 				return fmt.Errorf("unknown config key: %s", key)
 			}

@@ -20,6 +20,8 @@ type Config struct {
 	WorktreesBase string                       `yaml:"worktrees_base"`
 	DefaultBranch string                       `yaml:"default_branch"`
 	BranchPrefix  string                       `yaml:"branch_prefix"`
+	DefaultAgent  string                       `yaml:"default_agent,omitempty"`
+	AgentAliases  map[string]string            `yaml:"agent_aliases,omitempty"`
 	Connectors    map[string]ConnectorConfig   `yaml:"connectors,omitempty"`
 	Tasks         []Task                       `yaml:"tasks,omitempty"`
 
@@ -54,6 +56,8 @@ func DefaultConfig() *Config {
 		WorktreesBase: filepath.Join(home, "worktrees"),
 		DefaultBranch: "main",
 		BranchPrefix:  "feature",
+		DefaultAgent:  "",
+		AgentAliases:  make(map[string]string),
 		Connectors:    make(map[string]ConnectorConfig),
 		Tasks:         []Task{},
 	}
@@ -95,6 +99,9 @@ func Load() (*Config, error) {
 	}
 	if cfg.Tasks == nil {
 		cfg.Tasks = []Task{}
+	}
+	if cfg.AgentAliases == nil {
+		cfg.AgentAliases = make(map[string]string)
 	}
 	return cfg, nil
 }
