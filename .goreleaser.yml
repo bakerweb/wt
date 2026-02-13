@@ -1,0 +1,45 @@
+version: 2
+
+project_name: wt
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: wt
+    main: ./cmd/wt
+    binary: wt
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X github.com/bakerweb/wt/internal/cli.Version={{.Version}}
+
+archives:
+  - id: default
+    format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+
+release:
+  github:
+    owner: bakerweb
+    name: wt
+  draft: false
+  prerelease: auto
