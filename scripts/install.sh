@@ -30,11 +30,11 @@ check_deps() {
         missing+=("git (>= 2.20)")
     else
         local git_version
-        git_version=$(git --version | grep -oP '\d+\.\d+' | head -1)
+        git_version=$(git --version | sed -E 's/^[^0-9]*([0-9]+\.[0-9]+).*/\1/')
         local git_major git_minor
         git_major=$(echo "$git_version" | cut -d. -f1)
         git_minor=$(echo "$git_version" | cut -d. -f2)
-        if (( git_major < 2 )) || (( git_major == 2 && git_minor < 20 )); then
+        if [ "$git_major" -lt 2 ] || ([ "$git_major" -eq 2 ] && [ "$git_minor" -lt 20 ]); then
             error "git >= 2.20 required (found $git_version)"
             missing+=("git (>= 2.20)")
         else
@@ -100,8 +100,11 @@ detect_platform() {
 
 # --- Check WSL ---
 check_wsl() {
-    if grep -qiE '(microsoft|wsl)' /proc/version 2>/dev/null; then
-        info "Detected WSL environment"
+    # Only check on Linux systems
+    if [ "$(uname -s)" = "Linux" ] && [ -f /proc/version ]; then
+        if grep -qi -E '(microsoft|wsl)' /proc/version 2>/dev/null; then
+            info "Detected WSL environment"
+        fi
     fi
 }
 
